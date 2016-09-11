@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>PayPal Node SDK Source: resources/Notification.js</title>
+
+	<!--[if lt IE 9]>
+	<script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+	<![endif]-->
+	<link type="text/css" rel="stylesheet" href="styles/sunlight.default.css">
+
+	<link type="text/css" rel="stylesheet" href="styles/site.yeti.css">
+
+</head>
+
+<body>
+
+<div class="navbar navbar-default navbar-fixed-top navbar-inverse">
+<div class="container">
+	<div class="navbar-header">
+		<a class="navbar-brand" href="index.html">PayPal Node SDK</a>
+	</div>
+	<div class="navbar-collapse">
+		<ul class="nav navbar-nav">
+			
+			<li class="dropdown">
+				<a href="global.html" class="dropdown-toggle" data-toggle="dropdown">Global<b class="caret"></b></a>
+				<ul class="dropdown-menu inline">
+					<li><a href="global.html#authorization">authorization</a></li><li><a href="global.html#authorizeUrl">authorizeUrl</a></li><li><a href="global.html#billingAgreement">billingAgreement</a></li><li><a href="global.html#billingPlan">billingPlan</a></li><li><a href="global.html#capture">capture</a></li><li><a href="global.html#checkExpiredToken">checkExpiredToken</a></li><li><a href="global.html#clone">clone</a></li><li><a href="global.html#configure">configure</a></li><li><a href="global.html#creditCard">creditCard</a></li><li><a href="global.html#executeHttp">executeHttp</a></li><li><a href="global.html#generateToken">generateToken</a></li><li><a href="global.html#getClientId">getClientId</a></li><li><a href="global.html#getClientSecret">getClientSecret</a></li><li><a href="global.html#getRedirectUri">getRedirectUri</a></li><li><a href="global.html#invoice">invoice</a></li><li><a href="global.html#invoke">invoke</a></li><li><a href="global.html#logoutUrl">logoutUrl</a></li><li><a href="global.html#merge">merge</a></li><li><a href="global.html#mixin">mixin</a></li><li><a href="global.html#notification">notification</a></li><li><a href="global.html#openIdConnect">openIdConnect</a></li><li><a href="global.html#openIdConnectRequest">openIdConnectRequest</a></li><li><a href="global.html#order">order</a></li><li><a href="global.html#payment">payment</a></li><li><a href="global.html#payout">payout</a></li><li><a href="global.html#payoutItem">payoutItem</a></li><li><a href="global.html#refund">refund</a></li><li><a href="global.html#restFunctions">restFunctions</a></li><li><a href="global.html#sale">sale</a></li><li><a href="global.html#token_persist">token_persist</a></li><li><a href="global.html#tokenInfoRequest">tokenInfoRequest</a></li><li><a href="global.html#updateToken">updateToken</a></li><li><a href="global.html#userInfoRequest">userInfoRequest</a></li><li><a href="global.html#webhook">webhook</a></li><li><a href="global.html#webhookEvent">webhookEvent</a></li><li><a href="global.html#webhookEventType">webhookEventType</a></li><li><a href="global.html#webProfile">webProfile</a></li>
+				</ul>
+			</li>
+			
+		</ul>
+	</div>
+</div>
+</div>
+
+
+<div class="container">
+<div class="row">
+
+	
+	<div class="col-md-12">
+	
+		<div id="main">
+			
+
+		<h1 class="page-title">Source: resources/Notification.js</h1>
+    
+<section>
+    <article>
+        <pre
+            class="sunlight-highlight-javascript linenums">/* Copyright 2015-2016 PayPal, Inc. */
+"use strict";
+
+var generate = require('../generate');
+var api = require('../api');
+var https = require('https');
+var crypto = require('crypto');
+var crc32 = require('buffer-crc32');
+
+/**
+ * Exposes REST endpoints for creating and managing webhooks
+ * @return {Object} webhook functions
+ */
+function webhook() {
+    var baseURL = '/v1/notifications/webhooks/';
+    var operations = ['create', 'list', 'get', 'del', 'delete'];
+
+    var ret = {
+        baseURL: baseURL,
+        replace: function replace(id, data, config, cb) {
+            api.executeHttp('PATCH', this.baseURL + id, data, config, cb);
+        },
+        eventTypes: function eventTypes(id, config, cb) {
+            api.executeHttp('GET', this.baseURL + id + '/event-types', {}, config, cb);
+        }
+    };
+    ret = generate.mixin(ret, operations);
+    return ret;
+}
+
+/**
+ * Exposes REST endpoints for working with subscribed webhooks events
+ *
+ * https://developer.paypal.com/webapps/developer/docs/integration/direct/rest-webhooks-overview/#events
+ * @return {Object} webhook event functions
+ */
+function webhookEvent() {
+    var baseURL = '/v1/notifications/webhooks-events/';
+    var operations = ['list', 'get'];
+
+    function verifyPayload(key, msg, hash, hashAlgo) {
+        hashAlgo = hashAlgo || 'sha256WithRSAEncryption';
+
+        return crypto.createVerify(hashAlgo)
+            .update(msg)
+            .verify(key, hash, 'base64');
+    }
+
+    /**
+     * Instead of calling this method, it is recommended that you initiate a GET request in your code for the webhook
+     * event data and use the returned information from the webhook. See
+     * https://github.com/paypal/PayPal-node-SDK/wiki/Webhook-Validation
+     *
+     * @example
+     * var paypal = require('paypal-rest-sdk');
+     * function(request, response) {
+     *     try {
+     *         // Get the Webhook event id from the incoming event request
+     *         var webhookEventId = JSON.parse(request.body).id;
+     *
+     *         paypal.notification.webhookEvent.get(webhookEventId, function (error, webhookEvent) {
+     *             if (error) {
+     *                 console.log(error);
+     *                 // The webhook event data could not be found.
+     *                 // Send a HTTP 503 response status code ( http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html#sec10.5.4 )
+     *                 // to signal to PayPal to resend the request at a later time.
+     *                 response.sendStatus(503);
+     *             } else {
+     *                 // Proceed to use the data from PayPal
+     *                 console.log("Get webhookEvent Response");
+     *                 console.log(JSON.stringify(webhookEvent));
+     *                 response.sendStatus(200);
+     *             }
+     *         });
+     *     } catch (e) {
+     *         // The webhook id could not be found or any other error occurred.
+     *         // Send a HTTP 503 response status code ( http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html#sec10.5.4 )
+     *         // to signal to PayPal to resend the request at a later time
+     *         response.sendStatus(503);
+     *     }
+     * }
+     *
+     * @deprecated
+     * @param  {String}   body raw body of request
+     * @param  {Function} cb   callback function
+     */
+    function getAndVerify(body, cb) {
+        var response = false;
+        var err = null;
+        try {
+            var webhookEventId = JSON.parse(body).id;
+            api.executeHttp('GET', baseURL + webhookEventId, {}, function (error, res) {
+                if (error) {
+                    cb(error, response);
+                } else {
+                    cb(err, true);
+                }
+            });
+        } catch (e) {
+            err = new Error("Webhook Event Id attribute not found. Possible reason could be invalid JSON Object.");
+            cb(err, response);
+        }
+    }
+
+    /**
+     * @param {Object} headers from request
+     * @param {String} raw body of request
+     * @param {String} webhook id
+     * @param {Function} callback function
+     */
+    function verify(headers, body, webhookId, callback) {
+        // In an effort not to break existing applications, accept old arguments temporarily
+        if (arguments.length > 4) {
+            /* jshint validthis: true */
+            return verifyLegacy.apply(this, arguments);
+        }
+
+        if (typeof headers !== 'object') {
+            return callback(new Error("headers is not an object"), false);
+        }
+
+        // Normalizes headers
+        Object.keys(headers).forEach(function (header) {
+            headers[header.toUpperCase()] = headers[header];
+        });
+
+        // Convert PayPal's hashing algorithm to one Node supports
+        // (assuming SHA is used indefinitely)
+        if (typeof headers['PAYPAL-AUTH-ALGO'] === 'string') {
+            headers['PAYPAL-AUTH-ALGO'] = headers['PAYPAL-AUTH-ALGO']
+                                           .replace(/^SHA/, 'sha')
+                                           .replace(/withRSA$/, 'WithRSAEncryption');
+        }
+
+        https.get(headers['PAYPAL-CERT-URL'], function (res) {
+            var cert = '';
+            res.on('error', function (e) {
+                console.log('PayPal-Node-SDK: problem with cert dl - ' + e.message);
+                callback(e, null);
+            });
+            res.on('data', function (chunk) {
+                cert += chunk;
+            });
+            res.on('end', function () {
+                var err = null;
+                var response = false;
+                try {
+                    var expectedSignature = headers['PAYPAL-TRANSMISSION-ID'] + "|" + headers['PAYPAL-TRANSMISSION-TIME'] + "|" + webhookId + "|" + crc32.unsigned(body);
+                    response = verifyPayload(cert, expectedSignature, headers['PAYPAL-TRANSMISSION-SIG'], headers['PAYPAL-AUTH-ALGO']);
+                } catch (e) {
+                    err = new Error("Error verifying webhook payload.");
+                }
+                callback(err, response);
+            });
+        });
+    }
+
+    function verifyLegacy(certURL, transmissionId, timeStamp, webhookId, eventBody, ppTransmissionSig, cb) {
+        // Emit a warning that the arguments have changed
+        if (process.env.NODE_ENV === 'development') {
+            console.log('PayPal-Node-SDK: Webhook verify arguments have changed. Please check the latest documentation on https://developer.paypal.com/docs/integration/direct/rest-webhooks-overview/#event-signature.');
+        }
+
+        https.get(certURL, function (res) {
+            var cert = '';
+            res.on('error', function (e) {
+                console.log('PayPal-Node-SDK: problem with cert dl - ' + e.message);
+                cb(e, null);
+            });
+            res.on('data', function (chunk) {
+                cert += chunk;
+            });
+            res.on('end', function () {
+                var err = null;
+                var response = false;
+                try {
+                    var expectedSignature = transmissionId + "|" + timeStamp + "|" + webhookId + "|" + crc32.unsigned(eventBody);
+                    response = verifyPayload(cert, expectedSignature, ppTransmissionSig);
+                } catch (e) {
+                    err = new Error("Error verifying webhook payload.");
+                }
+                cb(err, response);
+            });
+        });
+    }
+
+    var ret = {
+        baseURL: baseURL,
+        verify: verify,
+        getAndVerify: getAndVerify,
+        resend: function resend(id, config, cb) {
+            api.executeHttp('POST', this.baseURL + id + '/resend', {}, config, cb);
+        }
+    };
+    ret = generate.mixin(ret, operations);
+    return ret;
+}
+
+/**
+ * Exposes REST endpoint for listing available event types for webhooks
+ * @return {Object} webhook event type functions
+ */
+function webhookEventType() {
+    var baseURL = '/v1/notifications/webhooks-event-types/';
+    var operations = ['list'];
+
+    var ret = {
+        baseURL: baseURL
+    };
+    ret = generate.mixin(ret, operations);
+    return ret;
+}
+
+/**
+ * Exposes the namespace for webhook and webhook event functionalities
+ * 
+ * https://developer.paypal.com/webapps/developer/docs/api/#notifications
+ * @return {Object} notification functions
+ */
+function notification() {
+    return {
+        webhook: webhook(),
+        webhookEvent: webhookEvent(),
+        webhookEventType: webhookEventType()
+    };
+}
+
+module.exports = notification;
+</pre>
+    </article>
+</section>
+
+
+
+
+
+		</div>
+	</div>
+
+	<div class="clearfix"></div>
+
+	
+
+</div>
+</div>
+
+
+<footer>
+
+
+	<span class="copyright">
+	PayPal Copyright © 2013-2016
+	</span>
+
+<span class="jsdoc-message">
+	Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.4.1</a>
+	on 2016-09-11T16:23:46+00:00 using the <a
+	href="https://github.com/docstrap/docstrap">DocStrap template</a>.
+</span>
+</footer>
+
+<!--<script src="scripts/sunlight.js"></script>-->
+<script src="scripts/docstrap.lib.js"></script>
+<script src="scripts/bootstrap-dropdown.js"></script>
+<script src="scripts/toc.js"></script>
+
+<script>
+$( function () {
+	$( "[id*='$']" ).each( function () {
+		var $this = $( this );
+
+		$this.attr( "id", $this.attr( "id" ).replace( "$", "__" ) );
+	} );
+
+	$( ".tutorial-section pre, .readme-section pre" ).each( function () {
+		var $this = $( this );
+
+		var example = $this.find( "code" );
+		exampleText = example.html();
+		var lang = /{@lang (.*?)}/.exec( exampleText );
+		if ( lang && lang[1] ) {
+			exampleText = exampleText.replace( lang[0], "" );
+			example.html( exampleText );
+			lang = lang[1];
+		} else {
+			var langClassMatch = example.parent()[0].className.match(/lang\-(\S+)/);
+			lang = langClassMatch ? langClassMatch[1] : "javascript";
+		}
+
+		if ( lang ) {
+
+			$this
+			.addClass( "sunlight-highlight-" + lang )
+			.addClass( "linenums" )
+			.html( example.html() );
+
+		}
+	} );
+
+	Sunlight.highlightAll( {
+		lineNumbers : true,
+		showMenu : true,
+		enableDoclinks : true
+	} );
+
+	$( "#toc" ).toc( {
+		anchorName  : function ( i, heading, prefix ) {
+			var id = $( heading ).attr( "id" );
+			return id && id.replace(/\~/g, '-inner-').replace(/\./g, '-static-') || ( prefix + i );
+		},
+		selectors   : "h1,h2,h3,h4",
+		showAndHide : false,
+                navbarOffset: 10,
+		smoothScrolling: true
+	} );
+
+	$( "#toc>ul" ).addClass( "nav nav-pills nav-stacked" );
+	$( "#main span[id^='toc']" ).addClass( "toc-shim" );
+	$( '.dropdown-toggle' ).dropdown();
+	//			$( ".tutorial-section pre, .readme-section pre" ).addClass( "sunlight-highlight-javascript" ).addClass( "linenums" );
+
+  $( "table" ).each( function () {
+    var $this = $( this );
+    $this.addClass('table');
+  } );
+
+} );
+</script>
+
+
+
+<!--Navigation and Symbol Display-->
+
+
+<!--Google Analytics-->
+
+
+</body>
+</html>
